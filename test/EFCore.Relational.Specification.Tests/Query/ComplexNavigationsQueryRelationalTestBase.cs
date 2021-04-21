@@ -510,23 +510,19 @@ namespace Microsoft.EntityFrameworkCore.Query
 
         [ConditionalTheory]
         [MemberData(nameof(IsAsyncData))]
-        public virtual async Task Projecting_collection_with_FirstOrDefault_split_throws(bool async)
+        public virtual Task Projecting_collection_with_FirstOrDefault_split(bool async)
         {
-            Assert.Equal(
-                RelationalStrings.UnableToSplitCollectionProjectionInSplitQuery(
-                    "QuerySplittingBehavior.SplitQuery", "AsSplitQuery", "AsSingleQuery"),
-                (await Assert.ThrowsAsync<InvalidOperationException>(
-                    () => AssertFirstOrDefault(
-                        async,
-                        ss => ss.Set<Level1>()
-                            .AsSplitQuery()
-                            .Select(e => new { e.Id, Level2s = e.OneToMany_Optional1.ToList() }),
-                        predicate: l => l.Id == 1,
-                        asserter: (e, a) =>
-                        {
-                            Assert.Equal(e.Id, a.Id);
-                            AssertCollection(e.Level2s, a.Level2s);
-                        }))).Message);
+            return AssertFirstOrDefault(
+                async,
+                ss => ss.Set<Level1>()
+                    .AsSplitQuery()
+                    .Select(e => new { e.Id, Level2s = e.OneToMany_Optional1.ToList() }),
+                predicate: l => l.Id == 1,
+                asserter: (e, a) =>
+                {
+                    Assert.Equal(e.Id, a.Id);
+                    AssertCollection(e.Level2s, a.Level2s);
+                });
         }
 
         [ConditionalTheory]
