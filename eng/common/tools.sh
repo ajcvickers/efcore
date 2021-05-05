@@ -36,6 +36,10 @@ prepare_machine=${prepare_machine:-false}
 # True to restore toolsets and dependencies.
 restore=${restore:-true}
 
+# Allows restoring .NET Core Runtimes and SDKs from alternative feeds
+runtimeSourceFeed=${runtimeSourceFeed:-""}
+runtimeSourceFeedKey=${runtimeSourceFeedKey:-""}
+
 # Adjusts msbuild verbosity level.
 verbosity=${verbosity:-'minimal'}
 
@@ -107,6 +111,12 @@ function InitializeDotNetCli {
   fi
 
   local install=$1
+  local runtimeSourceFeedArg=""
+  local runtimeSourceFeedKeyArg=""
+  if [[ $# == 3 ]]; then
+    runtimeSourceFeedArg=$2
+    runtimeSourceFeedKeyArg=$3
+  fi
 
   # Don't resolve runtime, shared framework, or SDK from other locations to ensure build determinism
   export DOTNET_MULTILEVEL_LOOKUP=0
@@ -152,7 +162,7 @@ function InitializeDotNetCli {
 
     if [[ ! -d "$DOTNET_INSTALL_DIR/sdk/$dotnet_sdk_version" ]]; then
       if [[ "$install" == true ]]; then
-        InstallDotNetSdk "$dotnet_root" "$dotnet_sdk_version"
+        InstallDotNetSdk "$dotnet_root" "$dotnet_sdk_version" "unset" $runtimeSourceFeedArg $runtimeSourceFeedKeyArg
       else
         Write-PipelineTelemetryError -category 'InitializeToolset' "Unable to find dotnet with SDK version '$dotnet_sdk_version'"
         ExitWithExitCode 1
@@ -202,7 +212,6 @@ function InstallDotNet {
   fi
   bash "$install_script" --version $version --install-dir "$root" $archArg $runtimeArg $skipNonVersionedFilesArg || {
     local exit_code=$?
-    echo "Failed to install dotnet SDK from public location (exit code '$exit_code')."
 
     local runtimeSourceFeed=''
     if [[ -n "${6:-}" ]]; then
