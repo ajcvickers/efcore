@@ -16,11 +16,11 @@ namespace Microsoft.EntityFrameworkCore.Tools;
 
 internal class ReflectionOperationExecutor : OperationExecutorBase
 {
-    private readonly object _executor;
-    private readonly Assembly _commandsAssembly;
+    private object _executor;
+    private Assembly _commandsAssembly;
     private const string ReportHandlerTypeName = "Microsoft.EntityFrameworkCore.Design.OperationReportHandler";
     private const string ResultHandlerTypeName = "Microsoft.EntityFrameworkCore.Design.OperationResultHandler";
-    private readonly Type _resultHandlerType;
+    private Type _resultHandlerType;
     private string? _efcoreVersion;
 #if NET
     private AssemblyLoadContext? _assemblyLoadContext;
@@ -56,7 +56,9 @@ internal class ReflectionOperationExecutor : OperationExecutorBase
             AppDomain.CurrentDomain.SetData("DataDirectory", dataDirectory);
         }
 
+#if !NET
         AppDomain.CurrentDomain.AssemblyResolve += ResolveAssembly;
+#endif
 
 #if NET
         _commandsAssembly = DesignAssemblyPath != null
@@ -105,14 +107,20 @@ internal class ReflectionOperationExecutor : OperationExecutorBase
                 return _assemblyLoadContext;
             }
 
-            AssemblyLoadContext.Default.Resolving += (context, name) =>
+            // Load the target and startup assemblies into a collectible context so they can be
+            // unloaded when this executor is disposed. The tool loads these assemblies to discover
+            // the DbContext, then shells out to 'dotnet publish', which rebuilds and overwrites the
+            // same bin\...\*.dll files. On Windows a loaded assembly file is locked, so the copy
+            // fails unless the file has been released first. See https://github.com/dotnet/efcore/issues/25555.
+            var assemblyLoadContext = new AssemblyLoadContext("EntityFrameworkCore.Tools", isCollectible: true);
+            assemblyLoadContext.Resolving += (context, name) =>
             {
                 var assemblyPath = Path.Combine(AppBasePath, name.Name + ".dll");
                 return File.Exists(assemblyPath) ? context.LoadFromAssemblyPath(assemblyPath) : null;
             };
-            _assemblyLoadContext = AssemblyLoadContext.Default;
+            _assemblyLoadContext = assemblyLoadContext;
 
-            return AssemblyLoadContext.Default;
+            return assemblyLoadContext;
         }
     }
 #endif
@@ -152,6 +160,7 @@ internal class ReflectionOperationExecutor : OperationExecutorBase
             resultHandler,
             arguments);
 
+#if !NET
     private Assembly? ResolveAssembly(object? sender, ResolveEventArgs args)
     {
         var assemblyName = new AssemblyName(args.Name);
@@ -173,7 +182,36 @@ internal class ReflectionOperationExecutor : OperationExecutorBase
 
         return null;
     }
+#endif
 
     public override void Dispose()
-        => AppDomain.CurrentDomain.AssemblyResolve -= ResolveAssembly;
+    {
+#if NET
+        // Drop every reference into the collectible context and unload it so the target and startup
+        // assemblies are released before 'dotnet publish' tries to overwrite their bin\...\*.dll
+        // files. See https://github.com/dotnet/efcore/issues/25555.
+        _executor = null!;
+        _resultHandlerType = null!;
+        _commandsAssembly = null!;
+
+        if (_assemblyLoadContext is { IsCollectible: true } assemblyLoadContext)
+        {
+            _assemblyLoadContext = null;
+
+            // The unload only completes once the GC observes that nothing references the context;
+            // force it here so the file lock is released by the time the caller starts publishing.
+            var weakReference = new WeakReference(assemblyLoadContext);
+            assemblyLoadContext.Unload();
+            assemblyLoadContext = null;
+
+            for (var i = 0; weakReference.IsAlive && i < 10; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+        }
+#else
+        AppDomain.CurrentDomain.AssemblyResolve -= ResolveAssembly;
+#endif
+    }
 }
