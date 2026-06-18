@@ -40,7 +40,29 @@ public class ReflectionOperationExecutorTest
         }
         finally
         {
-            Directory.Delete(targetDir, recursive: true);
+            DeleteDirectory(targetDir);
+        }
+    }
+
+    private static void DeleteDirectory(string path)
+    {
+        // On Windows the just-unloaded assembly's file handle can be released slightly after the
+        // load context is collected, so a recursive delete may briefly fail with a sharing/access
+        // violation. This is a test-cleanup concern only (in the real tool, publish runs much
+        // later), so retry for a moment and then give up quietly rather than fail the test.
+        for (var i = 0; i < 20; i++)
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                Thread.Sleep(50);
+            }
         }
     }
 
