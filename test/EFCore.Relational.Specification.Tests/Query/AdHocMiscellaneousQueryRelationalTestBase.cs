@@ -487,7 +487,9 @@ namespace Microsoft.EntityFrameworkCore.Query
         //   deliberately restricted to ValueTuple/Tuple -- see ValueTuple_whole_object_from_nullable_side --
         //   since only those BCL types have a closed, guaranteed constructor-to-property contract; an
         //   arbitrary named type's "matching name" convention can't be verified and could silently fold to
-        //   the wrong value for a transforming constructor); plain inner with no aggregate / no
+        //   the wrong value for a transforming constructor); an anonymous type holding a whole entity on the nullable side (navigation expansion rewrites
+        //   the reference into a member-wise copy that no longer matches the recorded marker; same family as #38608, for both
+        //   LeftJoin and RightJoin); plain inner with no aggregate / no
         //   pushdown (including a plain RightJoin outer, one with only Where/Take over a plain Select, and one that is already a
         //   join result); and a GroupBy followed by a client-evaluated Select (a pre-existing limitation of
         //   LEFT JOIN as well); and server-side OrderBy/Where null-checks against the
@@ -1726,6 +1728,50 @@ namespace Microsoft.EntityFrameworkCore.Query
             // status 3 -> on both sides
             Assert.Equal(1, result[2].l!.Count);
             Assert.Equal(3, result[2].r!.PickupStatusId);
+        }
+
+        [Fact]
+        public virtual async Task RightJoin_whole_object_outer_nullable_entity_in_anonymous_outer()
+        {
+            // The outer is an anonymous type that holds a whole entity next to a scalar. The marker is injected into the Distinct
+            // subquery, but navigation expansion rewrites the user's reference to the object into a fresh member-wise copy
+            // ("new { r = ti.Outer.r, PickupStatusId = ti.Outer.PickupStatusId }"), which no longer matches the node the marker was
+            // recorded against, so the null gate never fires. The same happens for LeftJoin (see the LeftJoin analogue below), so
+            // this is not RightJoin-specific; it is the same family as #38608 (navigation expansion). A scalar-only anonymous type is
+            // kept as a plain reference and is covered.
+            var contextFactory = await InitializeNonSharedTest<Context30915>(seed: Seed30915);
+            using var context = contextFactory.CreateDbContext();
+
+            var requests = context.Requests.Select(r => new { r, r.PickupStatusId }).Distinct();
+
+            var query = requests
+                .RightJoin(
+                    context.Statuses, c => c.PickupStatusId, s => s.PickupStatusId, (request, s) => new { s.PickupStatusId, request })
+                .OrderBy(e => e.PickupStatusId);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => query.ToListAsync());
+            Assert.Contains("Cannot read the Value property of a Nullable object that has no value", ex.Message);
+            // #30915 TODO: blocked on navigation expansion (#38608); flip to assert results if/when fixed.
+        }
+
+        [Fact]
+        public virtual async Task LeftJoin_whole_object_inner_nullable_entity_in_anonymous_inner()
+        {
+            // LeftJoin analogue of RightJoin_whole_object_outer_nullable_entity_in_anonymous_outer: an anonymous type holding a
+            // whole entity next to a scalar on the nullable (inner) side. Pre-existing; see that test for the cause.
+            var contextFactory = await InitializeNonSharedTest<Context30915>(seed: Seed30915);
+            using var context = contextFactory.CreateDbContext();
+
+            var requests = context.Requests.Select(r => new { r, r.PickupStatusId }).Distinct();
+
+            var query = context.Statuses
+                .LeftJoin(
+                    requests, s => s.PickupStatusId, c => c.PickupStatusId, (s, request) => new { s.PickupStatusId, request })
+                .OrderBy(e => e.PickupStatusId);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => query.ToListAsync());
+            Assert.Contains("Cannot read the Value property of a Nullable object that has no value", ex.Message);
+            // #30915 TODO: blocked on navigation expansion (#38608); flip to assert results if/when fixed.
         }
 
         [Fact]

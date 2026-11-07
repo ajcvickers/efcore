@@ -3502,6 +3502,38 @@ FULL JOIN (
 """);
     }
 
+    public override async Task RightJoin_whole_object_outer_nullable_entity_in_anonymous_outer()
+    {
+        await base.RightJoin_whole_object_outer_nullable_entity_in_anonymous_outer();
+
+        AssertSql(
+            """
+SELECT [s].[PickupStatusId], [r0].[Id], [r0].[PickupStatusId], [r0].[Priority]
+FROM (
+    SELECT DISTINCT [r].[Id], [r].[PickupStatusId], [r].[Priority], 1 AS [marker]
+    FROM [Requests] AS [r]
+) AS [r0]
+RIGHT JOIN [Statuses] AS [s] ON [r0].[PickupStatusId] = [s].[PickupStatusId]
+ORDER BY [s].[PickupStatusId]
+""");
+    }
+
+    public override async Task LeftJoin_whole_object_inner_nullable_entity_in_anonymous_inner()
+    {
+        await base.LeftJoin_whole_object_inner_nullable_entity_in_anonymous_inner();
+
+        AssertSql(
+            """
+SELECT [s].[PickupStatusId], [r0].[Id], [r0].[PickupStatusId], [r0].[Priority]
+FROM [Statuses] AS [s]
+LEFT JOIN (
+    SELECT DISTINCT [r].[Id], [r].[PickupStatusId], [r].[Priority], 1 AS [marker]
+    FROM [Requests] AS [r]
+) AS [r0] ON [s].[PickupStatusId] = [r0].[PickupStatusId]
+ORDER BY [s].[PickupStatusId]
+""");
+    }
+
     public override async Task RightJoin_whole_object_outer_nullable_Where_over_plain_Select_outer()
     {
         await base.RightJoin_whole_object_outer_nullable_Where_over_plain_Select_outer();
