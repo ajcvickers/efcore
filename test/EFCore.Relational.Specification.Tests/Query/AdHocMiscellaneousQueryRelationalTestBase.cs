@@ -1603,6 +1603,28 @@ namespace Microsoft.EntityFrameworkCore.Query
         }
 
         [Fact]
+        public virtual async Task RightJoin_whole_object_outer_nullable_Where_outer_null_serverside()
+        {
+            // RightJoin analogue of Where_nonentity_projection_null_serverside: a server-side null check against the whole
+            // non-entity outer cannot be translated.
+            var contextFactory = await InitializeNonSharedTest<Context30915>(seed: Seed30915);
+            using var context = contextFactory.CreateDbContext();
+
+            var categories = context.Requests
+                .GroupBy(r => r.PickupStatusId, (k, els) => new { pickupStatusId = k, Count = els.Count() });
+
+            var query = categories
+                .RightJoin(
+                    context.Statuses, c => c.pickupStatusId, s => s.PickupStatusId, (countInfo, s) => new { s.PickupStatusId, countInfo })
+                .Where(e => e.countInfo == null)
+                .OrderBy(e => e.PickupStatusId);
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => query.ToListAsync());
+            Assert.Contains("could not be translated", ex.Message);
+            // #30915 TODO: currently throws on base; flip to assert results if/when fixed.
+        }
+
+        [Fact]
         public virtual async Task RightJoin_whole_object_outer_nullable_plain_outer_no_pushdown()
         {
             // The outer needs no pushdown here, so (as for the plain-inner LEFT JOIN case) there is no subquery for the
@@ -1731,8 +1753,10 @@ namespace Microsoft.EntityFrameworkCore.Query
         [Fact]
         public virtual async Task RightJoin_whole_object_outer_nullable_Where_over_plain_Select_outer()
         {
-            // A Where over a plain Select outer pushes down, but the whole object is not gated on the marker (cause not diagnosed;
-            // the LEFT JOIN analogue differs, since an inner Where is folded into the ON clause).
+            // Navigation expansion keeps the Select as a pending selector, so at the join the outer shaper is the bare entity (no
+            // anonymous object, hence no marker is injected); the Where is applied to that entity and the Select is re-applied after
+            // the join as a fresh "new { ... }" over ti.Outer members. Same cause as the plain outer with no pushdown (#38608), not
+            // a separate problem with Where. (The LEFT JOIN analogue differs, since an inner Where is folded into the ON clause.)
             var contextFactory = await InitializeNonSharedTest<Context30915>(seed: Seed30915);
             using var context = contextFactory.CreateDbContext();
 
@@ -1751,7 +1775,8 @@ namespace Microsoft.EntityFrameworkCore.Query
         [Fact]
         public virtual async Task RightJoin_whole_object_outer_nullable_Take_over_plain_Select_outer()
         {
-            // A Take over a plain Select outer pushes down, but the whole object is not gated on the marker (cause not diagnosed).
+            // As for Where over a plain Select outer: navigation expansion keeps the Select as a pending selector, so the outer shaper
+            // at the join is the bare entity (no marker is injected) and the anonymous object is rebuilt after the join (#38608).
             var contextFactory = await InitializeNonSharedTest<Context30915>(seed: Seed30915);
             using var context = contextFactory.CreateDbContext();
 
@@ -1770,7 +1795,9 @@ namespace Microsoft.EntityFrameworkCore.Query
         [Fact]
         public virtual async Task RightJoin_whole_object_outer_nullable_outer_is_join_result()
         {
-            // The outer is itself the result of a join, so it needs no pushdown and the marker is inlined as a constant.
+            // The outer is itself the result of a join, so it needs no pushdown and the marker is inlined as a constant. In addition,
+            // navigation expansion rebuilds the first join's result ("f") after the second join as a member-wise copy
+            // ("new { ... = ti0.Outer.Inner..., countInfo = ti0.Outer.Outer }"), which no longer matches the recorded node (#38608).
             var contextFactory = await InitializeNonSharedTest<Context30915>(seed: Seed30915);
             using var context = contextFactory.CreateDbContext();
 

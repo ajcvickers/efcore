@@ -3538,6 +3538,13 @@ ORDER BY [s].[PickupStatusId]
 """);
     }
 
+    public override async Task RightJoin_whole_object_outer_nullable_Where_outer_null_serverside()
+    {
+        await base.RightJoin_whole_object_outer_nullable_Where_outer_null_serverside();
+
+        AssertSql();
+    }
+
     public override async Task RightJoin_whole_object_outer_nullable_plain_outer_no_pushdown()
     {
         await base.RightJoin_whole_object_outer_nullable_plain_outer_no_pushdown();
